@@ -125,6 +125,8 @@ for (f in 1:5) {
 
 Based on 5-fold cross validation the final model has accuracy `r mean(cv.accuracy)`, which is very good. We use this model to predict the outcome variable "classe" on the testing data.
 
+## Prediction
+
 ```{r cache=TRUE}
 rf.model <- randomForest(classe~., data=training.clean, mtry = mtry)
 predict(rf.model, newdata = testing, type = "class")

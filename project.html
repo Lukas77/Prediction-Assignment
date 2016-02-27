@@ -269,6 +269,9 @@ for (f in 1:5) {
   cv.accuracy[f] &lt;- confusionMatrix(cvrf.pred, training.clean[folds==f, ]$classe)$overall[1]
 }</code></pre>
 <p>Based on 5-fold cross validation the final model has accuracy 0.9960759, which is very good. We use this model to predict the outcome variable “classe” on the testing data.</p>
+</div>
+<div id="prediction" class="section level2">
+<h2>Prediction</h2>
 <pre class="r"><code>rf.model &lt;- randomForest(classe~., data=training.clean, mtry = mtry)
 predict(rf.model, newdata = testing, type = &quot;class&quot;)</code></pre>
 <pre><code>##  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 
