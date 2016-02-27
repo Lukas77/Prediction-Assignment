@@ -1,0 +1,131 @@
+---
+title: "Exercise Type Prediction"
+author: "Lukas Adler"
+date: "February 26, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+The goal of this assigment is to create and test a model that can predict the quality of performing an exercise (variable "classe") from various measurements using devices such as Jawbone Up, Nike FuelBand, and Fitbit. For the variables and model selection I use (simple) validation since we have plenty of observations, for testing the accuracy of the final model I use cross validation for even better precision. The dataset with some basic information is available at <http://groupware.les.inf.puc-rio.br/har>. The best model is a random forest with accuracy over 99.6% with a possible faster alternative K nearest neighbours with accuracy over 93%.
+
+## Data Exploration
+
+First lets load the data and look at their summary (not shown here because of its length).
+
+```{r cache=TRUE}
+training <- read.csv("pml-training.csv", na.strings = c("NA", "#DIV/0!"))
+testing <- read.csv("pml-testing.csv", na.strings = c("NA", "#DIV/0!"))
+```
+
+From summary of the training data we can see that we have a lot of missing values (NAs). Lets see if the missing values are somehow correlated to our response variable "classe" on a few examples.
+
+```{r cache=TRUE}
+table(training$classe[is.na(training$kurtosis_roll_belt)])
+table(training$classe[is.na(training$var_accel_forearm)])
+table(training$classe[is.na(training$max_picth_forearm)]) # note the typo in the variable name!
+```
+
+It seems that all of the classes have about the same amount of missing values. Since for the predictors with missing values we only have very few real values (for about 2 % of the rows) it is safe to ignore these variables in our model. For our clean training data we also drop the first seven variables containing row number, user name, timestamps and window variables as these are not measurements of movement type. 
+
+```{r cache=TRUE}
+nacount <- apply(training, 2, function(x) sum(is.na(x))) # count the NAs in columns
+training.clean <- subset(training, select = nacount==0) # using only variables with no NAs
+training.clean <- subset(training.clean, select = -(1:7))
+```
+
+After these steps we are left with 52 predictors and the response variable. We still have a lot of predictors so it is not feasible to do a standard pairs plot. Instead we can look at a few pairs (here I show only one) to see if there are any visible patterns in the data. But first we must split the data into a training and validation set.
+
+```{r}
+set.seed(12345)
+index.validation <- sample(1:nrow(training.clean), nrow(training.clean) %/% 10) # index for validation set (10% of original training set)
+data.train <- training.clean[-index.validation, ]
+data.valid <- training.clean[index.validation, ]
+table(data.train$classe)
+table(data.valid$classe)
+
+library(ggplot2)
+g <- ggplot(data = data.train, aes(roll_belt, magnet_dumbbell_z, col = classe))
+g <- g + geom_point()
+g
+```
+
+We can see that the data form groups but we have several groups for the same response. We can suppose that simple models like logistic regession, linear discriminant analysis or classification and regression trees will not work very well with this data. 
+
+## Model selection
+
+In the model selection I focus on basic multiple classification algorithms and measure their validation set prediction accuracy to select the most suitable one. First lets try a simple model like LDA and see how it can predict the classe variable on the validation set.
+
+```{r cache=TRUE}
+library(MASS)
+library(caret)
+lda.model <- lda(classe~., data=data.train)
+lda.pred <- predict(lda.model, newdata = data.valid)
+```
+
+The accuracy of this model is `r caret::confusionMatrix(lda.pred$class, data.valid$classe)$overall[1]` - not very good as expected. We could improve the model by appropriate predictors selection but we can expect that its accuracy would not rise to exceptable levels.
+
+So lets try a little bit more flexible Quadratic Discriminant Analysis model (QDA).
+
+```{r cache=TRUE}
+library(MASS)
+library(caret)
+qda.model <- qda(classe~., data=data.train)
+qda.pred <- predict(qda.model, newdata = data.valid)
+```
+
+The accuracy is significanlty better at `r caret::confusionMatrix(qda.pred$class, data.valid$classe)$overall[1]` but still not really impressive.
+
+Since the task is basicly to classify the diffenrent measurements to different classes we can try a simple classification algorithm like K Nearest Neighbours.
+
+```{r cache=TRUE}
+knn.model <- knn3(classe~., data=data.train, k = 5)
+knn.pred <- predict(knn.model, newdata = data.valid, type = "class")
+confusionMatrix(knn.pred, data.valid$classe)
+```
+
+The KNN model works surprisingly well with validation data accuracy of `r caret::confusionMatrix(knn.pred, data.valid$classe)$overall[1]`. With a bit of parameters tweaking (setting k to say 2 to 10) we could still improve its accuracy but lets check if Random Forest will not do even better.
+
+```{r cache=TRUE, message=FALSE}
+library(randomForest)
+rf.model <- randomForest(classe~., data=data.train)
+rf.pred <- predict(rf.model, newdata = data.valid, type = "class")
+confusionMatrix(rf.pred, data.valid$classe)
+```
+
+Accuracy of this model is `r caret::confusionMatrix(rf.pred, data.valid$classe)$overall[1]` with the default parameters. Random forest seems to be a good algorithm for this task. Now lets try to find the best number of variables randomly sampled as candidates at each split (the mtry parameter of the randomForest function).
+
+```{r cache=TRUE}
+set.seed(12345)
+accuracy = rep(NA, 26)
+for (mtry in 1:26) {
+  rf.model <- randomForest(classe~., data=data.train, mtry = mtry)
+  rf.pred <- predict(rf.model, newdata = data.valid, type = "class")
+  accuracy[mtry] <- confusionMatrix(rf.pred, data.valid$classe)$overall[1]
+}
+mtry <- which.max(accuracy)
+```
+
+The best mtry value according to the validation tests is `r mtry`. Finaly lets test the accuracy of RF model with mtry=13 parameter we just found with 5-fold cross validation.
+
+```{r cache=TRUE}
+folds <- sample(rep(1:5, length=nrow(training.clean)))
+table(folds)
+cv.accuracy <- rep(NA, 5)
+for (f in 1:5) {
+  cvrf.model <- randomForest(classe~., data=training.clean[folds!=f, ], mtry = mtry)
+  cvrf.pred <- predict(cvrf.model, newdata = training.clean[folds==f, ], type = "class")
+  cv.accuracy[f] <- confusionMatrix(cvrf.pred, training.clean[folds==f, ]$classe)$overall[1]
+}
+```
+
+Based on 5-fold cross validation the final model has accuracy `r mean(cv.accuracy)`, which is very good. We use this model to predict the outcome variable "classe" on the testing data.
+
+```{r cache=TRUE}
+rf.model <- randomForest(classe~., data=training.clean, mtry = mtry)
+predict(rf.model, newdata = testing, type = "class")
+```
